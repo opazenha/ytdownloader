@@ -11,7 +11,10 @@ import sys
 import logging
 import json
 import subprocess
+import asyncio
 from tqdm import tqdm
+from groq import Groq
+import eyed3
 
 # Set up logging
 logging.basicConfig(
@@ -126,6 +129,23 @@ def download_audio(url, output_dir=None):
         
         if process.returncode == 0:
             logger.info(f"Downloaded: {sanitized_title}.mp3")
+            
+            # Wait a moment for file to be fully written
+            time.sleep(1)
+            
+            # Check if the final MP3 file exists
+            final_mp3_path = output_path  # The output_path should already be the correct .mp3 file
+            if os.path.exists(final_mp3_path):
+                # Update metadata using API
+                title, artist = process_metadata(video_title)
+                if title and artist:
+                    update_mp3_metadata(final_mp3_path, title, artist)
+                
+                # Sync to Navidrome asynchronously
+                asyncio.run(sync_to_navidrome(final_mp3_path))
+            else:
+                logger.warning(f"MP3 file not found at expected path: {final_mp3_path}")
+            
             return True
         else:
             logger.error(f"Error downloading {url}: Process returned {process.returncode}")
@@ -169,10 +189,143 @@ def download_playlist(playlist_url, output_dir=None, delay=60):
                         time.sleep(1)
         
         logger.info("Playlist download completed!")
+        
+        # Sync all downloaded files to Navidrome
+        if output_dir is None:
+            output_dir = os.path.join(os.getcwd(), "downloads")
+        
+        logger.info("Syncing all downloaded files to Navidrome...")
+        for filename in os.listdir(output_dir):
+            if filename.endswith('.mp3'):
+                file_path = os.path.join(output_dir, filename)
+                asyncio.run(sync_to_navidrome(file_path))
+        
         return True
     
     except Exception as e:
         logger.error(f"Error downloading playlist: {str(e)}")
+        return False
+
+def process_metadata(file_name):
+    # Check if API key is available
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        logger.warning("GROQ_API_KEY not found. Using filename as fallback.")
+        # Simple fallback: try to extract from filename
+        if " - " in file_name:
+            parts = file_name.split(" - ", 1)
+            if len(parts) == 2:
+                return parts[1].strip(), parts[0].strip()
+        return file_name, "Unknown Artist"
+    
+    try:
+        client = Groq(api_key=api_key)
+
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Extract the title and artist of the song out of the Youtube video title. Return the result as a JSON object with 'title' and 'artist' keys. Do NOT use markdown code blocks (```json) in your response - return only the raw JSON. Video title: {file_name}",
+                }
+            ],
+            model="llama-3.1-8b-instant",
+        )
+
+        response_content = chat_completion.choices[0].message.content
+        
+        if response_content:
+            try:
+                # First attempt: parse directly
+                metadata = json.loads(response_content)
+                title = metadata.get('title', '')
+                artist = metadata.get('artist', '')
+                return title, artist
+            except json.JSONDecodeError:
+                # Second attempt: remove markdown code blocks and try again
+                cleaned_response = response_content.strip()
+                if cleaned_response.startswith('```json'):
+                    cleaned_response = cleaned_response[7:]  # Remove ```json
+                if cleaned_response.endswith('```'):
+                    cleaned_response = cleaned_response[:-3]  # Remove closing ```
+                cleaned_response = cleaned_response.strip()
+                
+                try:
+                    metadata = json.loads(cleaned_response)
+                    title = metadata.get('title', '')
+                    artist = metadata.get('artist', '')
+                    return title, artist
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON response after cleaning: {response_content}")
+                    return '', ''
+        else:
+            logger.error("Empty response from API")
+            return file_name, "Unknown Artist"
+
+    except Exception as e:
+        logger.error(f"API call failed: {str(e)}. Using filename as fallback.")
+        # Fallback to simple parsing
+        if " - " in file_name:
+            parts = file_name.split(" - ", 1)
+            if len(parts) == 2:
+                return parts[1].strip(), parts[0].strip()
+        return file_name, "Unknown Artist"
+
+def update_mp3_metadata(file_path, title, artist):
+    """Update MP3 file metadata with title and artist."""
+    try:
+        logger.info(f"Attempting to update metadata for: {file_path}")
+        logger.info(f"Title: '{title}', Artist: '{artist}'")
+        
+        audiofile = eyed3.load(file_path)
+        if audiofile is None:
+            logger.error(f"Could not load MP3 file: {file_path}")
+            return False
+        
+        if audiofile.tag is None:
+            logger.info("Initializing new tag")
+            audiofile.initTag(version=(2, 4))
+        
+        audiofile.tag.title = title
+        audiofile.tag.artist = artist
+        
+        # CRITICAL: Save the tag to disk
+        audiofile.tag.save()  # type: ignore
+        
+        logger.info(f"Successfully updated metadata for {file_path}: {title} - {artist}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating metadata for {file_path}: {str(e)}")
+        return False
+
+async def sync_to_navidrome(file_path):
+    """Async function to sync file to VPS using rsync."""
+    try:
+        logger.info(f"Starting sync to Navidrome for: {file_path}")
+        
+        # Build the rsync command to sync the specific file
+        rsync_cmd = f'rsync -avzP -e "ssh -i /home/zenha/.ssh/ocloud.key" "{file_path}" ubuntu@192.9.133.211:/home/ubuntu/navidrome/music/'
+        
+        # Run the rsync command asynchronously
+        process = await asyncio.create_subprocess_shell(
+            rsync_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            logger.info(f"Successfully synced {file_path} to Navidrome")
+            if stdout:
+                logger.info(f"Sync output: {stdout.decode().strip()}")
+        else:
+            logger.error(f"Failed to sync {file_path} to Navidrome")
+            if stderr:
+                logger.error(f"Sync error: {stderr.decode().strip()}")
+        
+        return process.returncode == 0
+    except Exception as e:
+        logger.error(f"Error during Navidrome sync: {str(e)}")
         return False
 
 @click.group()
@@ -183,7 +336,7 @@ def cli():
 @cli.command()
 @click.option('--url', required=True, help='YouTube video or playlist URL')
 @click.option('--output-dir', default=None, help='Directory to save the downloaded files')
-@click.option('--delay', default=60, help='Delay in seconds between playlist downloads')
+@click.option('--delay', default=20, help='Delay in seconds between playlist downloads')
 def download(url, output_dir, delay):
     """Download audio from YouTube video or playlist."""
     if "playlist" in url or "list=" in url:
