@@ -12,6 +12,7 @@ import logging
 import json
 import subprocess
 import asyncio
+import requests
 from tqdm import tqdm
 from groq import Groq
 import eyed3
@@ -22,6 +23,36 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+def send_telegram_message(message):
+    """Send a message via Telegram bot."""
+    try:
+        bot_token = os.environ.get("ZENHA_TELEGRAM_TOKEN")
+        chat_id = os.environ.get("ZENHA_TELEGRAM_CHAT_ID", "7996278878")
+        
+        if not bot_token:
+            logger.warning("ZENHA_TELEGRAM_TOKEN not found. Skipping Telegram notification.")
+            return False
+        
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        
+        response = requests.post(url, data=data, timeout=10)
+        response.raise_for_status()
+        
+        logger.info("Telegram notification sent successfully")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to send Telegram notification: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error sending Telegram notification: {str(e)}")
+        return False
 
 # Check if yt-dlp is installed
 try:
@@ -143,6 +174,9 @@ def download_audio(url, output_dir=None):
                 
                 # Sync to Navidrome asynchronously
                 asyncio.run(sync_to_navidrome(final_mp3_path))
+                
+                # Send Telegram notification
+                send_telegram_message(f"✅ <b>Download Completed!</b>\n\n🎵 {video_title}\n📁 Saved to: {output_path}\n🔄 Synced to Navidrome")
             else:
                 logger.warning(f"MP3 file not found at expected path: {final_mp3_path}")
             
@@ -199,6 +233,9 @@ def download_playlist(playlist_url, output_dir=None, delay=60):
             if filename.endswith('.mp3'):
                 file_path = os.path.join(output_dir, filename)
                 asyncio.run(sync_to_navidrome(file_path))
+        
+        # Send Telegram notification
+        send_telegram_message(f"✅ <b>Playlist Download Completed!</b>\n\n📁 Downloaded {len(videos)} videos\n🎵 Saved to: {output_dir}\n📊 All files synced to Navidrome")
         
         return True
     
@@ -328,23 +365,22 @@ async def sync_to_navidrome(file_path):
         logger.error(f"Error during Navidrome sync: {str(e)}")
         return False
 
-@click.group()
-def cli():
-    """YouTube MP3 Downloader CLI."""
-    pass
-
-@cli.command()
-@click.option('--url', required=True, help='YouTube video or playlist URL')
+@click.command()
+@click.argument('url', required=True)
 @click.option('--output-dir', default=None, help='Directory to save the downloaded files')
 @click.option('--delay', default=20, help='Delay in seconds between playlist downloads')
-def download(url, output_dir, delay):
+def cli(url, output_dir, delay):
     """Download audio from YouTube video or playlist."""
     if "playlist" in url or "list=" in url:
         logger.info("Detected playlist URL")
-        download_playlist(url, output_dir, delay)
+        success = download_playlist(url, output_dir, delay)
+        if not success:
+            send_telegram_message("❌ <b>Playlist Download Failed!</b>\n\nPlease check the logs for details.")
     else:
         logger.info("Detected single video URL")
-        download_audio(url, output_dir)
+        success = download_audio(url, output_dir)
+        if not success:
+            send_telegram_message("❌ <b>Download Failed!</b>\n\nPlease check the logs for details.")
 
 if __name__ == '__main__':
     cli()
