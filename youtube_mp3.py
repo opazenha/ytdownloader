@@ -112,7 +112,7 @@ def get_playlist_info(url):
         logger.error(f"Error getting playlist info: {str(e)}")
         return []
 
-def download_audio(url, output_dir=None):
+def download_audio(url, output_dir=None, suppress_notification=False):
     """Download audio from a YouTube video using yt-dlp."""
     try:
         # Get video info first to get the title
@@ -175,8 +175,9 @@ def download_audio(url, output_dir=None):
                 # Sync to Navidrome asynchronously
                 asyncio.run(sync_to_navidrome(final_mp3_path))
                 
-                # Send Telegram notification
-                send_telegram_message(f"✅ <b>Download Completed!</b>\n\n🎵 {video_title}\n📁 Saved to: {output_path}\n🔄 Synced to Navidrome")
+                # Send Telegram notification (only if not suppressed)
+                if not suppress_notification:
+                    send_telegram_message(f"✅ <b>Download Completed!</b>\n\n🎵 {video_title}\n📁 Saved to: {output_path}\n🔄 Synced to Navidrome")
             else:
                 logger.warning(f"MP3 file not found at expected path: {final_mp3_path}")
             
@@ -211,7 +212,7 @@ def download_playlist(playlist_url, output_dir=None, delay=60):
                 video_url = f"https://www.youtube.com/watch?v={video_info.get('id', '')}" 
                 logger.info(f"Processing video {i+1}/{len(videos)}: {video_info.get('title', 'Unknown title')}")
                 
-                success = download_audio(video_url, output_dir)
+                success = download_audio(video_url, output_dir, suppress_notification=True)
                 pbar.update(1)
                 
                 # Add delay between downloads (except for the last video)
