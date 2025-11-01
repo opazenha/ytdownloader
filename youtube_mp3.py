@@ -20,7 +20,7 @@ import eyed3
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def send_telegram_message(message):
         chat_id = os.environ.get("ZENHA_TELEGRAM_CHAT_ID", "7996278878")
         
         if not bot_token:
-            logger.warning("ZENHA_TELEGRAM_TOKEN not found. Skipping Telegram notification.")
+            logger.warning("⚠️ ZENHA_TELEGRAM_TOKEN not found. Skipping Telegram notification.")
             return False
         
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -44,21 +44,21 @@ def send_telegram_message(message):
         response = requests.post(url, data=data, timeout=10)
         response.raise_for_status()
         
-        logger.info("Telegram notification sent successfully")
+        logger.info("📱 Telegram notification sent successfully")
         return True
         
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to send Telegram notification: {str(e)}")
+        logger.error(f"❌ Failed to send Telegram notification: {str(e)}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error sending Telegram notification: {str(e)}")
+        logger.error(f"❌ Unexpected error sending Telegram notification: {str(e)}")
         return False
 
 # Check if yt-dlp is installed
 try:
     subprocess.run(['yt-dlp', '--version'], capture_output=True, text=True, check=True)
 except (subprocess.SubprocessError, FileNotFoundError):
-    logger.error("yt-dlp is not installed or not in PATH. Please install it with: pip install yt-dlp")
+    logger.error("❌ yt-dlp is not installed or not in PATH. Please install it with: pip install yt-dlp")
     sys.exit(1)
 
 def sanitize_filename(filename):
@@ -80,10 +80,10 @@ def get_video_info(url):
         video_info = json.loads(result.stdout)
         return video_info
     except subprocess.SubprocessError as e:
-        logger.error(f"Error getting video info: {str(e)}")
+        logger.error(f"❌ Error getting video info: {str(e)}")
         return None
     except json.JSONDecodeError as e:
-        logger.error(f"Error parsing video info: {str(e)}")
+        logger.error(f"❌ Error parsing video info: {str(e)}")
         return None
 
 def get_playlist_info(url):
@@ -109,7 +109,7 @@ def get_playlist_info(url):
         
         return videos
     except subprocess.SubprocessError as e:
-        logger.error(f"Error getting playlist info: {str(e)}")
+        logger.error(f"❌ Error getting playlist info: {str(e)}")
         return []
 
 def download_audio(url, output_dir=None, suppress_notification=False):
@@ -118,7 +118,7 @@ def download_audio(url, output_dir=None, suppress_notification=False):
         # Get video info first to get the title
         video_info = get_video_info(url)
         if not video_info:
-            logger.error(f"Could not get video info for {url}")
+            logger.error(f"❌ Could not get video info for {url}")
             return False
         
         video_title = video_info.get('title', '')
@@ -127,7 +127,7 @@ def download_audio(url, output_dir=None, suppress_notification=False):
             video_title = f"youtube_video_{video_id}"
         
         sanitized_title = sanitize_filename(video_title)
-        logger.info(f"Downloading: {video_title}")
+        logger.info(f"⬇️  Downloading: {video_title}")
         
         # Create output directory if it doesn't exist
         if output_dir is None:
@@ -140,7 +140,7 @@ def download_audio(url, output_dir=None, suppress_notification=False):
         
         # Check if file already exists
         if os.path.exists(output_path):
-            logger.info(f"File already exists: {output_path}")
+            logger.info(f"✅ File already exists: {output_path}")
             return True
         
         # Download the audio file
@@ -159,7 +159,7 @@ def download_audio(url, output_dir=None, suppress_notification=False):
         process = subprocess.run(cmd, check=True)
         
         if process.returncode == 0:
-            logger.info(f"Downloaded: {sanitized_title}.mp3")
+            logger.info(f"✅ Downloaded: {sanitized_title}.mp3")
             
             # Wait a moment for file to be fully written
             time.sleep(1)
@@ -179,18 +179,18 @@ def download_audio(url, output_dir=None, suppress_notification=False):
                 if not suppress_notification:
                     send_telegram_message(f"✅ <b>Download Completed!</b>\n\n🎵 {video_title}\n📁 Saved to: {output_path}\n🔄 Synced to Navidrome")
             else:
-                logger.warning(f"MP3 file not found at expected path: {final_mp3_path}")
+                logger.warning(f"⚠️  MP3 file not found at expected path: {final_mp3_path}")
             
             return True
         else:
-            logger.error(f"Error downloading {url}: Process returned {process.returncode}")
+            logger.error(f"❌ Error downloading {url}: Process returned {process.returncode}")
             return False
     
     except subprocess.SubprocessError as e:
-        logger.error(f"Error downloading {url}: {str(e)}")
+        logger.error(f"❌ Error downloading {url}: {str(e)}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"❌ Unexpected error: {str(e)}")
         return False
 
 def download_playlist(playlist_url, output_dir=None, delay=60):
@@ -200,36 +200,36 @@ def download_playlist(playlist_url, output_dir=None, delay=60):
         videos = get_playlist_info(playlist_url)
         
         if not videos:
-            logger.error(f"No videos found in playlist: {playlist_url}")
+            logger.error(f"❌ No videos found in playlist: {playlist_url}")
             return False
         
-        logger.info(f"Playlist: {playlist_url}")
-        logger.info(f"Number of videos: {len(videos)}")
+        logger.info(f"📋 Playlist: {playlist_url}")
+        logger.info(f"🎵 Number of videos: {len(videos)}")
         
         # Create a progress bar
         with tqdm(total=len(videos), desc="Downloading playlist") as pbar:
             for i, video_info in enumerate(videos):
                 video_url = f"https://www.youtube.com/watch?v={video_info.get('id', '')}" 
-                logger.info(f"Processing video {i+1}/{len(videos)}: {video_info.get('title', 'Unknown title')}")
+                logger.info(f"🎬 Processing video {i+1}/{len(videos)}: {video_info.get('title', 'Unknown title')}")
                 
                 success = download_audio(video_url, output_dir, suppress_notification=True)
                 pbar.update(1)
                 
                 # Add delay between downloads (except for the last video)
                 if i < len(videos) - 1 and success:
-                    logger.info(f"Waiting {delay} seconds before next download...")
+                    logger.info(f"⏳ Waiting {delay} seconds before next download...")
                     for remaining in range(delay, 0, -1):
                         if remaining % 10 == 0:  # Only log every 10 seconds
-                            logger.info(f"Waiting {remaining} more seconds...")
+                            logger.info(f"⏳ Waiting {remaining} more seconds...")
                         time.sleep(1)
         
-        logger.info("Playlist download completed!")
+        logger.info("🎉 Playlist download completed!")
         
         # Sync all downloaded files to Navidrome
         if output_dir is None:
             output_dir = os.path.join(os.getcwd(), "downloads")
         
-        logger.info("Syncing all downloaded files to Navidrome...")
+        logger.info("🔄 Syncing all downloaded files to Navidrome...")
         for filename in os.listdir(output_dir):
             if filename.endswith('.mp3'):
                 file_path = os.path.join(output_dir, filename)
@@ -241,14 +241,14 @@ def download_playlist(playlist_url, output_dir=None, delay=60):
         return True
     
     except Exception as e:
-        logger.error(f"Error downloading playlist: {str(e)}")
+        logger.error(f"❌ Error downloading playlist: {str(e)}")
         return False
 
 def process_metadata(file_name):
     # Check if API key is available
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        logger.warning("GROQ_API_KEY not found. Using filename as fallback.")
+        logger.warning("⚠️  GROQ_API_KEY not found. Using filename as fallback.")
         # Simple fallback: try to extract from filename
         if " - " in file_name:
             parts = file_name.split(" - ", 1)
@@ -293,14 +293,14 @@ def process_metadata(file_name):
                     artist = metadata.get('artist', '')
                     return title, artist
                 except json.JSONDecodeError:
-                    logger.error(f"Failed to parse JSON response after cleaning: {response_content}")
+                    logger.error(f"❌ Failed to parse JSON response after cleaning: {response_content}")
                     return '', ''
         else:
-            logger.error("Empty response from API")
+            logger.error("❌ Empty response from API")
             return file_name, "Unknown Artist"
 
     except Exception as e:
-        logger.error(f"API call failed: {str(e)}. Using filename as fallback.")
+        logger.error(f"❌ API call failed: {str(e)}. Using filename as fallback.")
         # Fallback to simple parsing
         if " - " in file_name:
             parts = file_name.split(" - ", 1)
@@ -311,16 +311,16 @@ def process_metadata(file_name):
 def update_mp3_metadata(file_path, title, artist):
     """Update MP3 file metadata with title and artist."""
     try:
-        logger.info(f"Attempting to update metadata for: {file_path}")
-        logger.info(f"Title: '{title}', Artist: '{artist}'")
+        logger.info(f"🏷️  Updating metadata for: {file_path}")
+        logger.info(f"🎵 Title: '{title}', Artist: '{artist}'")
         
         audiofile = eyed3.load(file_path)
         if audiofile is None:
-            logger.error(f"Could not load MP3 file: {file_path}")
+            logger.error(f"❌ Could not load MP3 file: {file_path}")
             return False
         
         if audiofile.tag is None:
-            logger.info("Initializing new tag")
+            logger.info("🏷️  Initializing new tag")
             audiofile.initTag(version=(2, 4))
         
         audiofile.tag.title = title
@@ -329,16 +329,16 @@ def update_mp3_metadata(file_path, title, artist):
         # CRITICAL: Save the tag to disk
         audiofile.tag.save()  # type: ignore
         
-        logger.info(f"Successfully updated metadata for {file_path}: {title} - {artist}")
+        logger.info(f"✅ Successfully updated metadata for {file_path}: {title} - {artist}")
         return True
     except Exception as e:
-        logger.error(f"Error updating metadata for {file_path}: {str(e)}")
+        logger.error(f"❌ Error updating metadata for {file_path}: {str(e)}")
         return False
 
 async def sync_to_navidrome(file_path):
     """Async function to sync file to VPS using rsync."""
     try:
-        logger.info(f"Starting sync to Navidrome for: {file_path}")
+        logger.info(f"🔄 Starting sync to Navidrome for: {file_path}")
         
         # Build the rsync command to sync the specific file
         rsync_cmd = f'rsync -avzP -e "ssh -i /home/zenha/.ssh/ocloud.key" "{file_path}" ubuntu@192.9.133.211:/home/ubuntu/navidrome/music/'
@@ -353,17 +353,17 @@ async def sync_to_navidrome(file_path):
         stdout, stderr = await process.communicate()
         
         if process.returncode == 0:
-            logger.info(f"Successfully synced {file_path} to Navidrome")
+            logger.info(f"✅ Successfully synced {file_path} to Navidrome")
             if stdout:
-                logger.info(f"Sync output: {stdout.decode().strip()}")
+                logger.info(f"📤 Sync output: {stdout.decode().strip()}")
         else:
-            logger.error(f"Failed to sync {file_path} to Navidrome")
+            logger.error(f"❌ Failed to sync {file_path} to Navidrome")
             if stderr:
-                logger.error(f"Sync error: {stderr.decode().strip()}")
+                logger.error(f"❌ Sync error: {stderr.decode().strip()}")
         
         return process.returncode == 0
     except Exception as e:
-        logger.error(f"Error during Navidrome sync: {str(e)}")
+        logger.error(f"❌ Error during Navidrome sync: {str(e)}")
         return False
 
 @click.command()
@@ -373,12 +373,12 @@ async def sync_to_navidrome(file_path):
 def cli(url, output_dir, delay):
     """Download audio from YouTube video or playlist."""
     if "playlist" in url or "list=" in url:
-        logger.info("Detected playlist URL")
+        logger.info("📋 Detected playlist URL")
         success = download_playlist(url, output_dir, delay)
         if not success:
             send_telegram_message("❌ <b>Playlist Download Failed!</b>\n\nPlease check the logs for details.")
     else:
-        logger.info("Detected single video URL")
+        logger.info("🎬 Detected single video URL")
         success = download_audio(url, output_dir)
         if not success:
             send_telegram_message("❌ <b>Download Failed!</b>\n\nPlease check the logs for details.")
