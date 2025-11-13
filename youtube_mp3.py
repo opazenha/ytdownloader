@@ -141,7 +141,7 @@ def download_audio(url, output_dir=None, suppress_notification=False, artist=Non
         # Check if file already exists
         if os.path.exists(output_path):
             logger.info(f"✅ File already exists: {output_path}")
-            return True
+            return "exists"
         
         # Download the audio file
         cmd = [
@@ -199,7 +199,7 @@ def download_audio(url, output_dir=None, suppress_notification=False, artist=Non
         logger.error(f"❌ Unexpected error: {str(e)}")
         return False
 
-def download_playlist(playlist_url, output_dir=None, delay=60):
+def download_playlist(playlist_url, output_dir=None, delay=60, artist=None):
     """Download all videos from a YouTube playlist as MP3 files."""
     try:
         # Get playlist information
@@ -218,11 +218,12 @@ def download_playlist(playlist_url, output_dir=None, delay=60):
                 video_url = f"https://www.youtube.com/watch?v={video_info.get('id', '')}" 
                 logger.info(f"🎬 Processing video {i+1}/{len(videos)}: {video_info.get('title', 'Unknown title')}")
                 
-                success = download_audio(video_url, output_dir, suppress_notification=True)
+                result = download_audio(video_url, output_dir, suppress_notification=True, artist=artist)
+                success = result == True or result == "exists"
                 pbar.update(1)
 
-                # Add delay between downloads (except for the last video)
-                if i < len(videos) - 1 and success:
+                # Add delay between downloads (except for the last video and when file already exists)
+                if i < len(videos) - 1 and result == True:
                     logger.info(f"⏳ Waiting {delay} seconds before next download...")
                     for remaining in range(delay, 0, -1):
                         if remaining % 10 == 0:  # Only log every 10 seconds
@@ -381,7 +382,7 @@ def cli(url, output_dir, delay, artist):
     """Download audio from YouTube video or playlist."""
     if "playlist" in url or "list=" in url:
         logger.info("📋 Detected playlist URL")
-        success = download_playlist(url, output_dir, delay)
+        success = download_playlist(url, output_dir, delay, artist)
         if not success:
             send_telegram_message("❌ <b>Playlist Download Failed!</b>\n\nPlease check the logs for details.")
     else:
