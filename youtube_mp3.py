@@ -112,7 +112,7 @@ def get_playlist_info(url):
         logger.error(f"❌ Error getting playlist info: {str(e)}")
         return []
 
-def download_audio(url, output_dir=None, suppress_notification=False):
+def download_audio(url, output_dir=None, suppress_notification=False, artist=None):
     """Download audio from a YouTube video using yt-dlp."""
     try:
         # Get video info first to get the title
@@ -167,10 +167,16 @@ def download_audio(url, output_dir=None, suppress_notification=False):
             # Check if the final MP3 file exists
             final_mp3_path = output_path  # The output_path should already be the correct .mp3 file
             if os.path.exists(final_mp3_path):
-                # Update metadata using API
-                title, artist = process_metadata(video_title)
-                if title and artist:
+                # Update metadata using API or provided artist
+                if artist:
+                    # Use provided artist and video title, skip GROQ call
+                    title = video_title
                     update_mp3_metadata(final_mp3_path, title, artist)
+                else:
+                    # Use GROQ API to extract metadata
+                    title, extracted_artist = process_metadata(video_title)
+                    if title and extracted_artist:
+                        update_mp3_metadata(final_mp3_path, title, extracted_artist)
                 
                 # Sync to Navidrome asynchronously
                 asyncio.run(sync_to_navidrome(final_mp3_path))
@@ -214,7 +220,7 @@ def download_playlist(playlist_url, output_dir=None, delay=60):
                 
                 success = download_audio(video_url, output_dir, suppress_notification=True)
                 pbar.update(1)
-                
+
                 # Add delay between downloads (except for the last video)
                 if i < len(videos) - 1 and success:
                     logger.info(f"⏳ Waiting {delay} seconds before next download...")
@@ -226,14 +232,14 @@ def download_playlist(playlist_url, output_dir=None, delay=60):
         logger.info("🎉 Playlist download completed!")
         
         # Sync all downloaded files to Navidrome
-        if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), "downloads")
-        
-        logger.info("🔄 Syncing all downloaded files to Navidrome...")
-        for filename in os.listdir(output_dir):
-            if filename.endswith('.mp3'):
-                file_path = os.path.join(output_dir, filename)
-                asyncio.run(sync_to_navidrome(file_path))
+#        if output_dir is None:
+#            output_dir = os.path.join(os.getcwd(), "downloads")
+#        
+#        logger.info("🔄 Syncing all downloaded files to Navidrome...")
+#        for filename in os.listdir(output_dir):
+#            if filename.endswith('.mp3'):
+#                file_path = os.path.join(output_dir, filename)
+#                asyncio.run(sync_to_navidrome(file_path))
         
         # Send Telegram notification
         send_telegram_message(f"✅ <b>Playlist Download Completed!</b>\n\n📁 Downloaded {len(videos)} videos\n🎵 Saved to: {output_dir}\n📊 All files synced to Navidrome")
@@ -370,7 +376,8 @@ async def sync_to_navidrome(file_path):
 @click.argument('url', required=True)
 @click.option('--output-dir', default=None, help='Directory to save the downloaded files')
 @click.option('--delay', default=20, help='Delay in seconds between playlist downloads')
-def cli(url, output_dir, delay):
+@click.option('--artist', default=None, help='Artist name to use (skips GROQ API call)')
+def cli(url, output_dir, delay, artist):
     """Download audio from YouTube video or playlist."""
     if "playlist" in url or "list=" in url:
         logger.info("📋 Detected playlist URL")
@@ -379,7 +386,7 @@ def cli(url, output_dir, delay):
             send_telegram_message("❌ <b>Playlist Download Failed!</b>\n\nPlease check the logs for details.")
     else:
         logger.info("🎬 Detected single video URL")
-        success = download_audio(url, output_dir)
+        success = download_audio(url, output_dir, artist=artist)
         if not success:
             send_telegram_message("❌ <b>Download Failed!</b>\n\nPlease check the logs for details.")
 
