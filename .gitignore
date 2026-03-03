@@ -1,6 +1,7 @@
 songs/
 downloads/
 test_downloads/
+videos/
 
 # Python
 __pycache__/

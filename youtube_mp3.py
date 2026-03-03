@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YouTube MP3 Downloader - A CLI tool to download YouTube videos as MP3 files.
+YouTube Downloader - Download YouTube videos as MP3 (default) or compressed MP4.
 """
 
 import os
@@ -66,6 +66,116 @@ def sanitize_filename(filename):
     if not filename:
         return "unknown_title"
     return re.sub(r'[\\/*?:"<>|]', "", filename)
+
+
+def get_default_output_dir(output_dir, media_type="audio"):
+    """Resolve output directory based on media type.
+
+    Uses project-relative folders when output_dir is not provided.
+    """
+    if output_dir is not None:
+        return os.path.abspath(os.path.expanduser(output_dir))
+
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    if media_type == "video":
+        return os.path.join(project_root, "videos")
+    return os.path.join(project_root, "downloads")
+
+
+def get_video_preset_args(max_height, crf, video_bitrate, audio_bitrate):
+    """Build ffmpeg compression options for yt-dlp video downloads."""
+    safe_height = max(144, int(max_height))
+    return (
+        f"ffmpeg:-c:v libx264 -crf {crf} -preset veryfast -vf scale=-2:{safe_height} -pix_fmt yuv420p "
+        f"-c:a aac -b:a {audio_bitrate} -b:v {video_bitrate} -movflags +faststart"
+    )
+
+
+def download_video(
+    url,
+    output_dir=None,
+    suppress_notification=False,
+    max_height=480,
+    crf=30,
+    video_bitrate="900k",
+    audio_bitrate="128k",
+):
+    """Download a YouTube video as compressed MP4 using yt-dlp + ffmpeg."""
+    try:
+        video_info = get_video_info(url)
+        if not video_info:
+            logger.error(f"❌ Could not get video info for {url}")
+            return False
+
+        video_title = video_info.get("title", "")
+        if not video_title:
+            video_id = video_info.get("id", "unknown")
+            video_title = f"youtube_video_{video_id}"
+
+        sanitized_title = sanitize_filename(video_title)
+        logger.info(f"⬇️  Downloading: {video_title}")
+
+        output_dir = get_default_output_dir(output_dir, "video")
+        os.makedirs(output_dir, exist_ok=True)
+
+        output_path = os.path.join(output_dir, f"{sanitized_title}.mp4")
+        if os.path.exists(output_path):
+            logger.info(f"✅ File already exists: {output_path}")
+            return "exists"
+
+        cmd = [
+            "yt-dlp",
+            "-f",
+            f"bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]",
+            "--merge-output-format",
+            "mp4",
+            "--postprocessor-args",
+            get_video_preset_args(
+                max_height=max_height,
+                crf=crf,
+                video_bitrate=video_bitrate,
+                audio_bitrate=audio_bitrate,
+            ),
+            "-o",
+            f"{output_dir}/{sanitized_title}.%(ext)s",
+            "--no-playlist",
+            "--progress",
+            "--extractor-args",
+            "youtube:player_client=default",
+            "--no-check-certificate",
+            "--user-agent",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--add-header",
+            "Referer:https://www.youtube.com/",
+            url,
+        ]
+
+        process = subprocess.run(cmd, check=True)
+
+        if process.returncode == 0:
+            logger.info(f"✅ Downloaded: {sanitized_title}.mp4")
+
+            time.sleep(1)
+
+            if os.path.exists(output_path):
+                if not suppress_notification:
+                    send_telegram_message(
+                        f"✅ <b>Download Completed!</b>\n\n🎬 {video_title}\n📁 Saved to: {output_path}\n⚙️  Compression: {max_height}p / CRF {crf} / {video_bitrate} / {audio_bitrate}"
+                    )
+            else:
+                logger.warning(f"⚠️  MP4 file not found at expected path: {output_path}")
+
+            return True
+
+        logger.error(f"❌ Error downloading {url}: Process returned {process.returncode}")
+        return False
+
+    except subprocess.SubprocessError as e:
+        logger.error(f"❌ Error downloading {url}: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {str(e)}")
+        return False
 
 
 def get_video_info(url):
@@ -139,8 +249,7 @@ def download_audio(url, output_dir=None, suppress_notification=False, artist=Non
         logger.info(f"⬇️  Downloading: {video_title}")
 
         # Create output directory if it doesn't exist
-        if output_dir is None:
-            output_dir = os.path.join(os.getcwd(), "downloads")
+        output_dir = get_default_output_dir(output_dir, "audio")
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -229,8 +338,18 @@ def download_audio(url, output_dir=None, suppress_notification=False, artist=Non
         return False
 
 
-def download_playlist(playlist_url, output_dir=None, delay=60, artist=None):
-    """Download all videos from a YouTube playlist as MP3 files."""
+def download_playlist(
+    playlist_url,
+    output_dir=None,
+    delay=60,
+    artist=None,
+    media_type="audio",
+    max_height=480,
+    crf=30,
+    video_bitrate="900k",
+    audio_bitrate="128k",
+):
+    """Download all videos from a YouTube playlist as audio or compressed MP4."""
     try:
         # Get playlist information
         videos = get_playlist_info(playlist_url)
@@ -242,6 +361,8 @@ def download_playlist(playlist_url, output_dir=None, delay=60, artist=None):
         logger.info(f"📋 Playlist: {playlist_url}")
         logger.info(f"🎵 Number of videos: {len(videos)}")
 
+        output_dir = get_default_output_dir(output_dir, media_type)
+
         # Create a progress bar
         with tqdm(total=len(videos), desc="Downloading playlist") as pbar:
             for i, video_info in enumerate(videos):
@@ -252,9 +373,21 @@ def download_playlist(playlist_url, output_dir=None, delay=60, artist=None):
                     f"🎬 Processing video {i + 1}/{len(videos)}: {video_info.get('title', 'Unknown title')}"
                 )
 
-                result = download_audio(
-                    video_url, output_dir, suppress_notification=True, artist=artist
-                )
+                if media_type == "video":
+                    result = download_video(
+                        video_url,
+                        output_dir,
+                        suppress_notification=True,
+                        max_height=max_height,
+                        crf=crf,
+                        video_bitrate=video_bitrate,
+                        audio_bitrate=audio_bitrate,
+                    )
+                else:
+                    result = download_audio(
+                        video_url, output_dir, suppress_notification=True, artist=artist
+                    )
+
                 success = result == True or result == "exists"
                 pbar.update(1)
 
@@ -424,8 +557,30 @@ async def sync_to_navidrome(file_path):
 )
 @click.option("--delay", default=20, help="Delay in seconds between playlist downloads")
 @click.option("--artist", default=None, help="Artist name to use (skips GROQ API call)")
-def cli(url, output_dir, delay, artist):
-    """Download audio from YouTube video or playlist."""
+@click.option(
+    "--media-type",
+    "--type",
+    "media_type",
+    default="audio",
+    type=click.Choice(["audio", "video"]),
+    help="Select output media type: audio (mp3) or video (mp4)",
+)
+@click.option("--max-height", default=480, type=int, help="Max video height for MP4 compression")
+@click.option("--crf", default=30, type=int, help="x264 CRF value for MP4 compression (higher = smaller file)")
+@click.option("--video-bitrate", default="900k", help="Video bitrate for MP4 compression")
+@click.option("--audio-bitrate", default="128k", help="Audio bitrate for MP4 compression")
+def cli(
+    url,
+    output_dir,
+    delay,
+    artist,
+    media_type,
+    max_height,
+    crf,
+    video_bitrate,
+    audio_bitrate,
+):
+    """Download audio or compressed video from YouTube video or playlist."""
     # Convert YouTube Music URLs to standard YouTube URLs
     if "music.youtube.com" in url:
         url = url.replace("music.youtube.com", "www.youtube.com")
@@ -445,14 +600,34 @@ def cli(url, output_dir, delay, artist):
             )
             return
 
-        success = download_playlist(url, output_dir, delay, artist)
+        success = download_playlist(
+            url,
+            output_dir=output_dir,
+            delay=delay,
+            artist=artist,
+            media_type=media_type,
+            max_height=max_height,
+            crf=crf,
+            video_bitrate=video_bitrate,
+            audio_bitrate=audio_bitrate,
+        )
         if not success:
             send_telegram_message(
                 "❌ <b>Playlist Download Failed!</b>\n\nPlease check the logs for details."
             )
     else:
         logger.info("🎬 Detected single video URL")
-        success = download_audio(url, output_dir, artist=artist)
+        if media_type == "video":
+            success = download_video(
+                url,
+                output_dir=output_dir,
+                max_height=max_height,
+                crf=crf,
+                video_bitrate=video_bitrate,
+                audio_bitrate=audio_bitrate,
+            )
+        else:
+            success = download_audio(url, output_dir, artist=artist)
         if not success:
             send_telegram_message(
                 "❌ <b>Download Failed!</b>\n\nPlease check the logs for details."
